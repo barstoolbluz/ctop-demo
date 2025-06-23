@@ -1,0 +1,57 @@
+version = 1
+
+[install]
+go.pkg-path = "go_1_22"
+
+# makefile compatibility
+gnumake.pkg-path = "gnumake"
+
+# upx for compressing binaries
+upx.pkg-path = "upx"
+
+# gnu coreutils for consistent scripting across platforms
+#coreutils.pkg-path = "coreutils"
+#coreutils.pkg-group = "darwin-tools"
+
+# git for version string extraction
+git.pkg-path = "git"
+
+# jq for processing test output
+jq.pkg-path = "jq"
+
+
+[vars]
+# Static build configuration
+CGO_ENABLED = "0"
+
+
+[build.ctop]
+command = '''
+set -euo pipefail
+mkdir -p "$out/release" "$out/test"
+
+git checkout "$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
+
+# runs tests with coverage
+go test -v -coverprofile="$out/test/coverage.out" ./... > "$out/test/test.log" 2>&1 || exit 1
+
+# generates coverage report
+go tool cover -html="$out/test/coverage.out" -o "$out/test/coverage.html"
+
+# builds ctop
+CTOP_VERSION=$(git describe --tags --dirty --always 2>/dev/null || echo "dev")
+
+for GOOS in linux darwin; do
+    for GOARCH in amd64 arm64; do
+        BIN="ctop-${CTOP_VERSION}-${GOOS}-${GOARCH}"
+        
+        env CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
+            go build -tags static -ldflags "-w -s -X=main.Version=$CTOP_VERSION" \
+            -o "$out/release/$BIN" .
+
+        if [ "$GOOS-$GOARCH" != "darwin-arm64" ]; then
+            upx --lzma "$out/release/$BIN" >/dev/null 2>&1 || true
+        fi
+    done
+done
+'''
